@@ -1,0 +1,6 @@
+population_size 6
+mutated_edges_k 2
+max_budget 1340
+max_bad_iters 10
+threads 12
+run_crossover true

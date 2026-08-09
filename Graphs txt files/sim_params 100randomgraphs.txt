@@ -1,0 +1,6 @@
+population_size 48
+mutated_edges_k 2
+max_budget 150
+max_bad_iters 10
+threads 12
+use_cumulitive_bounds false
