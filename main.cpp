@@ -681,7 +681,7 @@ int main()
     if (params.THREADS > 0) omp_set_num_threads(params.THREADS);
 
     NetworkTask task;
-    if (!loadNetworkData("test_graph_1.txt", task)) {
+    if (!loadNetworkData("network_data3.txt", task)) {
         std::cerr << "Error loading network_data.txt!" << std::endl;
         return 1;
     }
@@ -713,7 +713,7 @@ int main()
 
 
     long long total_time_ms = 0;
-    int NUM_RUNS = 1;   // КОЛИЧЕСТВО ПРОГОНОВ
+    int NUM_RUNS = 10;   // КОЛИЧЕСТВО ПРОГОНОВ
     int unsuccessful = 0;
     for (int run = 0; run < NUM_RUNS; run++)
     {
@@ -769,7 +769,7 @@ int main()
         double globalBestRL = 0.0;
         int SumOfCancelMutant = 0;
         auto start = std::chrono::steady_clock::now();// Начало времени отсчета основного цилка ГА(проверяем насколько ускоряет porog)
-        int pokoleniy = 5; // -------- УКАЗЫВАЕТ КОЛИЧЕСТВО ПОКОЛЕНИЙ -------------
+        int pokoleniy = 10; // -------- УКАЗЫВАЕТ КОЛИЧЕСТВО ПОКОЛЕНИЙ -------------
 
         for (int iter = 0; iter < pokoleniy; ++iter) { 
             if (badGenerations >= params.MAX_BAD) {

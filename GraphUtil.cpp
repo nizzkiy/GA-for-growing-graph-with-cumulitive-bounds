@@ -391,7 +391,6 @@ Graph* GraphGenerator::generateGraph(u_int vNumb, u_int eNumb)
 }
 
 
-
 void GraphFactory::choseVerts(Graph *&graph, double &p, u_int &u, u_int &v, u_int &uC, u_int &vC) {
     vC = graph->vertNumb;
     u_int deg = 2 * graph->vertNumb + 2;
@@ -868,7 +867,6 @@ void workerThread()
                 break;
             case TYPE_RANDOM:
                 g = GraphGenerator::generateGraph(g_N, g_M);
-                break;
                 break;
             default:
                 g = GraphGenerator::generateCompleteGraph(g_N);
