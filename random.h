@@ -6,7 +6,7 @@ namespace math {
     inline thread_local std::mt19937* current_task_rng = nullptr;
 
     // Глобальный генератор для главного потока (до OpenMP секций)
-    inline std::mt19937 global_main_rng(12345);
+    inline std::mt19937 global_main_rng(7777374931356);
 
     // Функция для привязки генератора к текущему потоку на время итерации
     inline void set_current_rng(std::mt19937* rng) {

@@ -26,7 +26,7 @@ struct SimulationParams {
     unsigned MAX_BAD = 50;      // Критерий остановки (число неудачных поколений)
     double MAX_BUDGET = 1000.0; // Максимальная стоимость
     int THREADS = 4;            // Число потоков
-    bool usePorog = true;
+    bool usePorog = true;       // Использование кумулятивных оценок
 };
 
 struct NetworkTask {
@@ -403,54 +403,6 @@ Graph* generateConnectiveIndividual(const NetworkTask& task, double maxBudget)
 }
 
 
-// --- Генерация начальной популяции ---
-
-Graph* generateFeasibleIndividual(const NetworkTask& task, double maxBudget) {
-    // 1. Берем копию базового графа
-    Graph* g = new Graph(*task.baseGraph); 
-
-    // Если в базовом графе меньше вершин, чем total (old + new), 
-    // нужно "раздуть" его. Проще всего добавить фиктивное ребро и удалить, 
-    // или использовать addEdge для первой связи.
-
-    // Стратегия: Случайно выбираем ребра из пула, пока:
-    // а) Граф не станет связным (все новые вершины подключены)
-    // б) Не превышен бюджет
-
-    std::vector<int> poolIndices(task.allowedEdges.size());
-    for (size_t i = 0; i < poolIndices.size(); ++i) poolIndices[i] = i;
-
-    // Перемешиваем пул, чтобы выбор был случайным
-    std::shuffle(poolIndices.begin(), poolIndices.end(), std::mt19937(std::random_device{}()));
-
-    for (int idx : poolIndices) {
-        const auto& edge = task.allowedEdges[idx];
-
-        // Проверка бюджета ДО добавления
-        if (g->getTotalCost() + edge.cost > maxBudget) continue;
-
-        // Добавляем ребро
-        Graph* temp = g->addEdge(edge.u, edge.v, edge.p, edge.cost);
-        if (temp) {
-            delete g; // Удаляем старую версию
-            g = temp; // Обновляем указатель
-        }
-
-        // Проверяем, достаточно ли мы добавили?
-        // Критерий: в графе должно быть (old + new) вершин и он должен быть связным
-        // isConnective проверяет связность всех имеющихся вершин.
-        // Но нам важно, чтобы "новые" вершины вообще появились в графе.
-        if (g->getVertNumb() == task.originalVerts + task.newVertsToAdd) {
-            if (g->isConnective()) {
-                return g; // Успех!
-            }
-        }
-    }
-
-    // Если прошли весь пул и не собрали связный граф или превысили бюджет
-    delete g;
-    return nullptr;
-}
 
 // --- Основной цикл Мутации (с кумулятивной проверкой) ---
 
@@ -555,7 +507,7 @@ void mutationStep(std::vector<Individual>& pop, const NetworkTask& task, const S
         }
     }
 
-    std::cout << "Canceled mutants = " << canceled_mutant<<"\n";
+    //std::cout << "Canceled mutants = " << canceled_mutant<<"\n";
 }
 
 // --- Основной цикл Скрещивания ---
@@ -591,11 +543,6 @@ void crossoverStep(std::vector<Individual>& pop, const NetworkTask& task, const 
             delete child;
             continue;
         }
-
-        
-        
-
-        
 
 
         double worstP = std::min(p1.exactRL, p2.exactRL); // находим худшего из родителей
@@ -670,18 +617,40 @@ void crossoverStep(std::vector<Individual>& pop, const NetworkTask& task, const 
 }
 
 
-int main() 
+int main(int argc, char* argv[])
 {
+    // 1. Чтение аргументов командной строки
+    std::string paramsFile = "UPC_Russia_params.txt";
+    std::string taskFile = "UPC_Russia_data.txt";
+    int overridePorog = -1; // -1: брать из конфига, 1: true, 0: false
+    bool silentMode = false;
+
+    if (argc >= 3) {
+        taskFile = argv[1];
+        paramsFile = argv[2];
+    }
+    if (argc >= 4) {
+        overridePorog = std::stoi(argv[3]);
+    }
+    if (argc >= 5) {
+        silentMode = (std::stoi(argv[4]) != 0);
+    }
+
     // 1. Загрузка параметров
     SimulationParams params;
-    if (!loadSimulationParams("sim_params4.txt", params)) {
+    if (!loadSimulationParams(paramsFile, params)) {
         std::cerr << "Error loading sim_params.txt! Using defaults." << std::endl;
+    }
+
+    // Если передан флаг из командной строки — переопределяем настройку из txt
+    if (overridePorog != -1) {
+        params.usePorog = (overridePorog == 1);
     }
 
     if (params.THREADS > 0) omp_set_num_threads(params.THREADS);
 
     NetworkTask task;
-    if (!loadNetworkData("network_data3.txt", task)) {
+    if (!loadNetworkData(taskFile, task)) {
         std::cerr << "Error loading network_data.txt!" << std::endl;
         return 1;
     }
@@ -692,6 +661,7 @@ int main()
         pop_rngs[i].seed(1000 + i); // Каждая позиция в массиве имеет свой жесткий сид
     }
 
+
     std::cout << "=== NETWORK GROWTH OPTIMIZATION ===" << std::endl;
     std::cout << "Base Graph Verts: " << task.originalVerts << std::endl;
     std::cout << "New Verts to Add: " << task.newVertsToAdd << std::endl;
@@ -699,10 +669,16 @@ int main()
     std::cout << "Max Budget: " << params.MAX_BUDGET << std::endl;
 
     //Проверка что в задаче новые вершины присоединяются через 2-вершинный разрез(тогда считаем везде в задаче надежность через формулы декомпозиции)
+
     std::pair<int, int> cutVertices = check2VerCut(task);
-    bool have_2_VertCut = (cutVertices.first != 0 && cutVertices.second != 0);
+
+    //-------флаг использования декомпозиции:
+    //bool have_2_VertCut = (cutVertices.first != 0 && cutVertices.second != 0);
+    bool have_2_VertCut = 0;
+
     double cachedBaseRL = 0.0;
     double cachedMergedRL = 0.0;
+    auto start = std::chrono::steady_clock::now();// Начало времени отсчета основного цилка ГА(проверяем насколько ускоряет porog)
     if (have_2_VertCut) // если в задаче есть разер, то кэшируем вероятность начального графа, потом все передаем в функции мутации и кроссовера
     {
         std::cout << "2-Verticise cut found! Calculating base and merged base reliabilities..." << std::endl;
@@ -713,26 +689,27 @@ int main()
 
 
     long long total_time_ms = 0;
-    int NUM_RUNS = 10;   // КОЛИЧЕСТВО ПРОГОНОВ
-    int unsuccessful = 0;
+    int NUM_RUNS = 1;   // КОЛИЧЕСТВО ПРОГОНОВ
+    int unsuccessful = 0; // количество неудачных попыток в создании начальной популяции
+    //Individual bestOverallIndividual = { nullptr, -1.0 }; //Для проверки на случайных графах скриптом
     for (int run = 0; run < NUM_RUNS; run++)
     {
         // 2. Инициализация популяции
         std::vector<Individual> population;
         population.reserve(params.POP);
 
-        std::cout << "Generating initial population..." << std::endl;
+        std::cout << "\nGenerating initial population..." << std::endl;
         int attempts = 0;
-        
-        while (population.size() < params.POP && attempts < 10000) {
+
+        while (population.size() < params.POP && attempts < 100) {
             Graph* g = generateConnectiveIndividual(task, params.MAX_BUDGET);
             //Graph* g = generateFeasibleIndividual(task, params.MAX_BUDGET); //это старое создание нач. популяции, не гарантирует связность 
             if (g)
             {
                 //g->printAdjMatrix(); 
-                
+
                 population.push_back({ g, 0.0 }); // Сохраняем в кэш с заглушкой надежности
-                
+
             }
             else  unsuccessful++;
             attempts++;
@@ -744,7 +721,7 @@ int main()
             if (population.empty()) return 1;
         }
         std::cout << "Population created: " << population.size() << std::endl;
-        
+
         std::cout << "Calculating initial population reliabilities in parallel..." << std::endl;
 
 #pragma omp parallel for schedule(dynamic)
@@ -753,27 +730,29 @@ int main()
             double initialRL = 0.0;
             if (have_2_VertCut)
             {
-                initialRL= calcFullReliabilityDecomp(task, *(population[i].graph), cutVertices, cachedBaseRL, cachedMergedRL);
+                initialRL = calcFullReliabilityDecomp(task, *(population[i].graph), cutVertices, cachedBaseRL, cachedMergedRL);
             }
             else initialRL = calcBounds(*(population[i].graph), 0.0).RL;
             population[i].exactRL = initialRL;
         }
 
         std::cout << "Initial population evaluation complete." << std::endl;
-//#pragma omp critical
-        //omp_set_num_threads(1); // ПОСЧИТАЛИ НАЧАЛЬНУЮ ПОПУЛЯЦИЮ ПАРАЛЛЕЛЬНО ДАЛЬШЕ НА ОДНОМ ПОТОКЕ ДЛЯ ЧИСТОТЫ ЗАМЕРА ВЛИЯНИЕ ПОРОГА
+        //#pragma omp critical
+                //omp_set_num_threads(1); // ПОСЧИТАЛИ НАЧАЛЬНУЮ ПОПУЛЯЦИЮ ПАРАЛЛЕЛЬНО ДАЛЬШЕ НА ОДНОМ ПОТОКЕ ДЛЯ ЧИСТОТЫ ЗАМЕРА ВЛИЯНИЕ ПОРОГА
 
-       
-        // 3. Основной цикл ГА
+
+                // 3. Основной цикл ГА
         int badGenerations = 0;
         double globalBestRL = 0.0;
         int SumOfCancelMutant = 0;
-        auto start = std::chrono::steady_clock::now();// Начало времени отсчета основного цилка ГА(проверяем насколько ускоряет porog)
-        int pokoleniy = 10; // -------- УКАЗЫВАЕТ КОЛИЧЕСТВО ПОКОЛЕНИЙ -------------
+        //auto start = std::chrono::steady_clock::now();// Начало времени отсчета основного цилка ГА(проверяем насколько ускоряет porog)
+        int pokoleniy = 100; // -------- УКАЗЫВАЕТ КОЛИЧЕСТВО ПОКОЛЕНИЙ -------------
 
-        for (int iter = 0; iter < pokoleniy; ++iter) { 
-            if (badGenerations >= params.MAX_BAD) {
-                std::cout << "Stopping criteria reached (MaxBad)." << std::endl;
+        for (int iter = 0; iter < pokoleniy; ++iter)
+        {
+            if (badGenerations >= params.MAX_BAD)
+            {
+                //std::cout << "Stopping criteria reached (MaxBad)." << std::endl;
                 break;
             }
 
@@ -781,24 +760,75 @@ int main()
 
             std::cout << "\n--- Generation " << iter << " ---" << std::endl;
 
+
             // ВЫВОД КЭШИРОВАННЫХ ЗНАЧЕНИЙ НАДЕЖНОСТИ (До мутации/скрещивания)
+
+
+
             std::cout << "Current Population Reliabilities: [ ";
             for (const auto& ind : population) {
                 std::cout << std::fixed << std::setprecision(8) << ind.exactRL << " ";
             }
             std::cout << "]" << std::endl;
 
+
+
             // A. Мутация
-            mutationStep(population, task, params,SumOfCancelMutant,have_2_VertCut,cachedBaseRL,cachedMergedRL,cutVertices,pop_rngs);
+            mutationStep(population, task, params, SumOfCancelMutant, have_2_VertCut, cachedBaseRL, cachedMergedRL, cutVertices, pop_rngs);
 
             // B. Скрещивание
-            crossoverStep(population, task, params,have_2_VertCut,cachedBaseRL, cachedMergedRL,cutVertices,pop_rngs);
-           
+            crossoverStep(population, task, params, have_2_VertCut, cachedBaseRL, cachedMergedRL, cutVertices, pop_rngs);
+
+            //------------КРИТЕРИЙ ОСТАНОВА---------------//
+
+            // 1. Ищем текущий максимум
+            double bestRL = population[0].exactRL;
+            for (const auto& ind : population) {
+                if (ind.exactRL > bestRL) {
+                    bestRL = ind.exactRL;
+                }
+            }
+
+            // 2. Считаем, сколько особей совпало с лучшей (с учетом погрешности double)
+            int convergedCount = 0;
+            const double EPS = 1e-9;
+
+            for (const auto& ind : population)
+            {
+                if (std::abs(ind.exactRL - bestRL) < EPS)
+                {
+                    convergedCount++;
+                }
+            }
+
+            // Критерий 1: Вся популяция (или сколько-то%) слилась в один граф
+            // Для строгого слияния: convergedCount == params.POP
+            if (convergedCount >= static_cast<int>(params.POP * 0.85))
+            {
+                std::cout << "[STOP] Population converged: " << convergedCount << "/" << params.POP << " individuals share best fitness (" << bestRL << ") at gen " << iter << std::endl;
+                break;
+            }
+
+            // Критерий 2: Страховка от "отшельников" и двух плато (стагнация оптимума)
+            if (bestRL > globalBestRL + EPS) {
+                globalBestRL = bestRL;
+                badGenerations = 0;
+            }
+            else {
+                badGenerations++;
+            }
+
+            if (badGenerations >= params.MAX_BAD) {
+                std::cout << "[STOP] Stagnation reached (" << params.MAX_BAD << " gens without improvement). Best RL: " << globalBestRL << std::endl;
+                break;
+            }
+
         }
 
         auto end = std::chrono::steady_clock::now(); // Конец времени отсчета работы основного цикла ГА
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         total_time_ms += elapsed_ms.count();
+
         // 4. Вывод результата
         std::cout << "\n=== FINAL RESULT ===" << std::endl;
 
@@ -844,12 +874,23 @@ int main()
         }
         std::cout << "\nWorking time of GA: " << elapsed_ms.count() << " ms";
 
-        std::cout << "\nAmount of cancelled mutants = " << 100.0*SumOfCancelMutant/(population.size()*pokoleniy);
+        //std::cout << "\nAmount of cancelled mutants = " << 100.0*SumOfCancelMutant/(population.size()*pokoleniy);
 
-
+        /*
+        //------- Для проверки на случайных графах питон скриптом:
+        for (const auto& ind : population)
+        {
+            if (ind.exactRL > bestOverallIndividual.exactRL)
+            {
+                if (bestOverallIndividual.graph) delete bestOverallIndividual.graph;
+                bestOverallIndividual.graph = new Graph(*(ind.graph));
+                bestOverallIndividual.exactRL = ind.exactRL;
+            }
+        }
+        */
         // Очистка
         for (auto& ind : population) delete ind.graph;
-        
+
     }
 
     // 6. Вывод среднего времени
@@ -858,11 +899,29 @@ int main()
 
     //std::cout << "Unsuccessful atempts of creating start Population(individuals) = " << unsuccessful;
 
-    
+    // ВЫВОД РЕЗУЛЬТАТА
+    /*
+    if (silentMode) {
+        // Формат маркера для скрипта-парсера:
+        // RESULT: <имя_графа> <use_porog> <avg_time_ms> <best_RL> <cost>
+        std::cout << "CSV_ROW;"
+            << taskFile << ";"
+            << (params.usePorog ? "TRUE" : "FALSE") << ";"
+            << std::fixed << std::setprecision(2) << average_ms << ";"
+            << std::setprecision(8) << bestOverallIndividual.exactRL << ";"
+            << (bestOverallIndividual.graph ? bestOverallIndividual.graph->getTotalCost() : 0.0)
+            << std::endl;
+    }
+    else {
+        std::cout << "\nAverage GA time: " << average_ms << " ms" << std::endl;
+        std::cout << "Best RL: " << bestOverallIndividual.exactRL << std::endl;
+    }
+    */
+    //if (bestOverallIndividual.graph) delete bestOverallIndividual.graph;
 
 
     delete task.baseGraph;
 
-    
+
     return 0;
 }

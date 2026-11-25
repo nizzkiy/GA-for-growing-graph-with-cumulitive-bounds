@@ -24,8 +24,7 @@ set(MI_OVERRIDE OFF CACHE INTERNAL "") # Отключаем глобальный
 include(FetchContent)
 FetchContent_Declare(
     mimalloc
-    GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-    GIT_TAG        v2.1.2 # или другая стабильная версия
+    URL https://github.com/microsoft/mimalloc/archive/refs/tags/v2.1.2.zip
 )
 FetchContent_MakeAvailable(mimalloc)
 
